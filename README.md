@@ -1,15 +1,10 @@
-#  CloudMusicTool
+#  Neatease Music Tool
 
-Netease Cloud Music song acquisition tool produced by python.
+Netease Cloud Music song tool produced by python.
 
-## Use
+- Download songs by id or url
 
-```shell
-git clone https://github.com/OfflineY/CloudMusicTool.git
+- NCM to MP3/FLAC
 
-pip install ...
-
-ptyhon3 main.pyw
-```
-
-![](https://gitee.com/offline2008/img/raw/master/Snipaste_2022-03-18_13-20-39.jpg)
+### Screenshot
+![](./img/s1.png)
