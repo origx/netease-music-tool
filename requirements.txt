@@ -1,0 +1,6 @@
+pycryptodome
+requests
+jsonpath
+ttkbootstrap
+mutagen
+Pillow

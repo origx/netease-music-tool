@@ -5,7 +5,15 @@ APP_TITLE = "NeteaseMusicTool"
 WINDOW_SIZE = (1100, 1000)
 WINDOW_MIN_SIZE = (1000, 900)
 
-FONT_FAMILY = "HarmonyOS Sans SC"
+# 按本机已安装字体选择中文无衬线字体，运行时由主题模块解析。
+FONT_FAMILIES = (
+	"Microsoft YaHei UI",
+	"Microsoft YaHei",
+	"SimHei",
+	"PingFang SC",
+	"Noto Sans CJK SC",
+)
+FONT_FAMILY = "TkDefaultFont"
 
 BG_DARK = "#1F1F1F"
 BG_PANEL = "#282828"
