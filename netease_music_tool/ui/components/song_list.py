@@ -1,102 +1,73 @@
 """多选下载列表组件。
 
-MDL(Basic)、MDL(Plus)、MVDL 页面共用。支持多选、删除选中、下载选中、
-全部删除；开启 Cookie 单曲模式时只保留「获取信息 / 下载」两个按钮。
+MDL(Basic)、MDL(Plus)、MVDL 页面共用。获取信息后自动勾选可下载项；
+开启 Cookie 单曲模式时隐藏勾选与批量操作，只保留「下载」。
 """
 
-import tkinter as tk
+from PySide6.QtCore import Signal
+from PySide6.QtWidgets import QAbstractItemView
 
-import ttkbootstrap as ttk
+from netease_music_tool.ui.components.selectable_list import SelectableListCard
+
+# (key, 标题, 宽度)；宽度为 None 的列自动拉伸。
+DEFAULT_COLUMNS = (
+    ("id", "歌曲 ID", None),
+    ("size", "文件大小", 140),
+    ("status", "状态", 170),
+)
 
 
-class SongListFrame(ttk.Frame):
+class SongListWidget(SelectableListCard):
+    downloadRequested = Signal()
+    _single_mode = False
+
     def __init__(
         self,
-        parent,
         status_label=None,
-        on_fetch=None,
-        on_download=None,
-        fetch_text="获取信息",
-        download_text="下载选中项",
-        columns=(("id", "歌曲 ID", 260), ("size", "文件大小", 160), ("status", "状态", 260)),
+        columns=DEFAULT_COLUMNS,
+        title="歌曲列表",
+        download_text="下载选中",
+        empty_text="输入 ID 或链接后点击「获取信息」",
         single_mode=False,
+        parent=None,
     ):
-        super().__init__(parent)
-        self.status_label = status_label
-        self._on_fetch = on_fetch
-        self._on_download = on_download
-        self.rows = []
-        self._single_mode = single_mode
-
-        action = ttk.Frame(self)
-        action.pack(fill=tk.X, pady=(0, 12))
-        self.fetch_button = ttk.Button(action, text=fetch_text, bootstyle="primary", command=on_fetch)
-        self.select_all_button = ttk.Button(action, text="全选", bootstyle="secondary", command=self.select_all)
-        self.download_button = ttk.Button(action, text=download_text, bootstyle="primary", command=on_download)
-        self.delete_button = ttk.Button(action, text="删除选中", bootstyle="secondary", command=self.delete_selected)
-        self.clear_button = ttk.Button(action, text="全部删除", bootstyle="secondary", command=self.clear_all)
-
-        self.tree = ttk.Treeview(
-            self,
-            columns=[column[0] for column in columns],
-            show="headings",
-            selectmode="extended",
-            height=10,
+        super().__init__(
+            columns,
+            status_label=status_label,
+            title=title,
+            primary_text=download_text,
+            primary_icon="download",
+            empty_text=empty_text,
+            pending_label="可下载项",
+            parent=parent,
         )
-        for column, title, width in columns:
-            self.tree.heading(column, text=title)
-            self.tree.column(column, width=width, anchor=tk.CENTER)
-        self.tree.pack(fill=tk.BOTH, expand=True)
-
-        self._apply_mode()
+        self.primaryRequested.connect(self.downloadRequested)
+        self.set_single_mode(single_mode)
 
     def set_single_mode(self, single):
-        self._single_mode = single
-        self._apply_mode()
+        self._single_mode = bool(single)
+        self.table.clearSelection()
+        self.table.setColumnHidden(0, self._single_mode)
+        self.table.setSelectionMode(
+            QAbstractItemView.NoSelection if self._single_mode else QAbstractItemView.ExtendedSelection
+        )
+        for widget in (self.count_label, self.select_button, self.delete_button, self.clear_button):
+            widget.setVisible(not self._single_mode)
+        self._refresh()
 
-    def _apply_mode(self):
-        if self._single_mode:
-            self.fetch_button.pack(side=tk.LEFT, padx=(0, 10))
-            self.download_button.pack(side=tk.LEFT)
-            self.download_button.configure(text="下载")
-            self.select_all_button.pack_forget()
-            self.delete_button.pack_forget()
-            self.clear_button.pack_forget()
-        else:
-            self.fetch_button.pack(side=tk.LEFT, padx=(0, 10))
-            self.select_all_button.pack(side=tk.LEFT, padx=(0, 10))
-            self.download_button.pack(side=tk.LEFT, padx=(0, 10))
-            self.download_button.configure(text="下载选中项")
-            self.delete_button.pack(side=tk.LEFT, padx=(0, 10))
-            self.clear_button.pack(side=tk.LEFT)
+    def _primary_ready(self, count):
+        return bool(self.rows) if self._single_mode else count > 0
+
+    def _primary_label(self, count):
+        return "下载" if self._single_mode else super()._primary_label(count)
 
     def populate(self, infos, format_row):
-        """用条目列表重建表格。format_row(info) 返回一行的值元组。"""
+        """用条目列表重建表格并自动勾选可下载项。format_row(info) 返回一行的值元组。"""
         self.rows = list(infos)
-        self.tree.delete(*self.tree.get_children())
-        for info in infos:
-            self.tree.insert("", tk.END, values=format_row(info))
-
-    def selected_indices(self):
-        return [self.tree.index(iid) for iid in self.tree.selection()]
-
-    def select_all(self):
-        self.tree.selection_set(self.tree.get_children())
-
-    def set_status(self, iid, text):
-        self.tree.set(iid, "status", text)
-
-    def delete_selected(self):
-        indices = sorted((self.tree.index(iid) for iid in self.tree.selection()), reverse=True)
-        for idx in indices:
-            if idx < len(self.rows):
-                del self.rows[idx]
-            self.tree.delete(self.tree.get_children()[idx])
-        if self.status_label:
-            self.status_label.configure(text="已删除选中")
-
-    def clear_all(self, notify=True):
-        self.rows.clear()
-        self.tree.delete(*self.tree.get_children())
-        if notify and self.status_label:
-            self.status_label.configure(text="已清空全部列表")
+        self.table.setRowCount(0)
+        self.table.setRowCount(len(self.rows))
+        for row, info in enumerate(self.rows):
+            self.fill_row(row, format_row(info))
+        if not self._single_mode:
+            self.select_pending()
+        self._refresh()

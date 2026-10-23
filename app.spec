@@ -5,7 +5,7 @@ a = Analysis(
     ['app.py'],
     pathex=[],
     binaries=[],
-    datas=[('d:/00_Workspace/netease-music-tool/.venv/Lib/site-packages/ttkbootstrap/assets', 'ttkbootstrap/assets')],
+    datas=[],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

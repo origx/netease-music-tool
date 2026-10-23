@@ -1,75 +1,74 @@
 """NCM 转换列表组件。
 
-NCM2MP3 页面使用。显示封面缩略图（放大）、歌名、歌手、时长、转换大小、
-状态；支持多选、删除选中、全部删除、转换选中项。
+NCM2MP3 页面使用。显示封面缩略图、歌名、歌手、时长、转换大小、状态；
+支持拖入 .ncm 文件、多选、删除选中、清空、转换选中项。新添加的文件自动勾选。
 """
 
-import tkinter as tk
-from io import BytesIO
+from PySide6.QtCore import QItemSelectionModel, QRect, Qt, Signal
+from PySide6.QtGui import QPixmap
 
-from PIL import Image, ImageTk
+from netease_music_tool.ui.components.common import make_button
+from netease_music_tool.ui.components.selectable_list import SelectableListCard
 
-import ttkbootstrap as ttk
+COLUMNS = (
+    ("cover", "封面", 56),
+    ("title", "歌名", None),
+    ("artist", "歌手", 150),
+    ("duration", "时长", 72),
+    ("size", "转换大小", 96),
+    ("status", "状态", 140),
+)
 
 
-class ConvertListFrame(ttk.Frame):
-    COLUMNS = (
-        ("title", "歌名", 200),
-        ("artist", "歌手", 140),
-        ("duration", "时长", 90),
-        ("size", "转换大小", 100),
-        ("status", "状态", 200),
-    )
+def _ncm_paths(mime_data):
+    if not mime_data.hasUrls():
+        return []
+    return [
+        url.toLocalFile()
+        for url in mime_data.urls()
+        if url.isLocalFile() and url.toLocalFile().lower().endswith(".ncm")
+    ]
 
-    def __init__(self, parent, status_label=None, on_add=None, on_convert=None, thumb_size=56):
-        super().__init__(parent)
-        self.status_label = status_label
-        self._on_add = on_add
-        self._on_convert = on_convert
-        self.rows = []
-        self._photos = []
-        self._thumb_size = thumb_size
 
-        action = ttk.Frame(self)
-        action.pack(fill=tk.X, pady=(0, 12))
-        self.add_button = ttk.Button(action, text="添加文件", bootstyle="primary", command=on_add)
-        self.delete_button = ttk.Button(action, text="删除选中", bootstyle="secondary", command=self.delete_selected)
-        self.clear_button = ttk.Button(action, text="全部删除", bootstyle="secondary", command=self.clear_all)
-        self.convert_button = ttk.Button(action, text="转换选中项", bootstyle="primary", command=on_convert)
+class ConvertListWidget(SelectableListCard):
+    addRequested = Signal()
+    convertRequested = Signal()
+    filesDropped = Signal(list)
+    add_button = None
 
-        style_name = f"ConvertList_{thumb_size}.Treeview"
-        style = ttk.Style()
-        style.configure(style_name, rowheight=thumb_size + 8)
-        self.tree = ttk.Treeview(
-            self,
-            columns=[column[0] for column in self.COLUMNS],
-            show="tree headings",
-            selectmode="extended",
-            height=10,
-            style=style_name,
+    def __init__(self, status_label=None, thumb_size=40, parent=None):
+        super().__init__(
+            COLUMNS,
+            status_label=status_label,
+            title="文件列表",
+            primary_text="转换选中",
+            primary_icon="repeat",
+            empty_text="拖入 .ncm 文件，或点击「添加文件」",
+            row_height=thumb_size + 12,
+            pending_label="待转换项",
+            parent=parent,
         )
-        self.tree.heading("#0", text="封面")
-        self.tree.column("#0", width=thumb_size + 30, minwidth=thumb_size + 30, anchor=tk.CENTER, stretch=False)
-        for column, title, width in self.COLUMNS:
-            self.tree.heading(column, text=title)
-            self.tree.column(column, width=width, anchor=tk.CENTER)
-        self.tree.pack(fill=tk.BOTH, expand=True)
+        self._thumb_size = thumb_size
+        self.add_button = make_button("添加文件", "secondary", "plus")
+        self.add_button.clicked.connect(lambda: self.addRequested.emit())
+        self.add_toolbar_widget(self.add_button)
+        self.primaryRequested.connect(self.convertRequested)
+        self.setAcceptDrops(True)
 
-        self.add_button.pack(side=tk.LEFT, padx=(0, 10))
-        self.delete_button.pack(side=tk.LEFT, padx=(0, 10))
-        self.clear_button.pack(side=tk.LEFT, padx=(0, 10))
-        self.convert_button.pack(side=tk.LEFT)
+    def _refresh(self):
+        super()._refresh()
+        if self.add_button is not None:
+            self.add_button.setEnabled(not self._busy)
 
     def add_row(self, record):
         """record: 含 title/artist/duration_text/size_text/cover(字节) 等字段。"""
         self.rows.append(record)
-        photo = self._make_photo(record.get("cover")) if record.get("cover") else None
-        self._photos.append(photo)
-        self.tree.insert(
-            "",
-            tk.END,
-            image=photo,
-            values=(
+        row = len(self.rows) - 1
+        self.table.insertRow(row)
+        self.fill_row(
+            row,
+            (
+                "",
                 record.get("title", ""),
                 record.get("artist", ""),
                 record.get("duration_text", "00:00"),
@@ -77,38 +76,44 @@ class ConvertListFrame(ttk.Frame):
                 "待转换",
             ),
         )
+        cover = self._make_thumb(record.get("cover"))
+        if cover is not None:
+            self.table.item(row, self.table.column_of("cover")).setData(Qt.UserRole, cover)
+        self.table.select_rows([row], QItemSelectionModel.SelectionFlag.Select)
 
-    def _make_photo(self, data):
-        try:
-            image = Image.open(BytesIO(data)).convert("RGBA")
-            image.thumbnail((self._thumb_size, self._thumb_size))
-            return ImageTk.PhotoImage(image)
-        except Exception:
+    def _make_thumb(self, data):
+        """裁成正方形并按 2 倍尺寸缩放，交给表格圆角绘制。"""
+        if not data:
             return None
+        pixmap = QPixmap()
+        if not pixmap.loadFromData(data):
+            return None
+        size = self._thumb_size * 2
+        pixmap = pixmap.scaled(size, size, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+        return pixmap.copy(QRect((pixmap.width() - size) // 2, (pixmap.height() - size) // 2, size, size))
 
-    def selected_indices(self):
-        return [self.tree.index(iid) for iid in self.tree.selection()]
+    def set_size(self, row, text):
+        self.set_cell(row, "size", text)
 
-    def set_status(self, iid, text):
-        self.tree.set(iid, "status", text)
+    def _set_drop_active(self, active):
+        self.setProperty("dropActive", active)
+        self.style().unpolish(self)
+        self.style().polish(self)
 
-    def set_size(self, iid, text):
-        self.tree.set(iid, "size", text)
+    def dragEnterEvent(self, event):
+        if not self._busy and _ncm_paths(event.mimeData()):
+            event.acceptProposedAction()
+            self._set_drop_active(True)
+        else:
+            event.ignore()
 
-    def delete_selected(self):
-        indices = sorted((self.tree.index(iid) for iid in self.tree.selection()), reverse=True)
-        for idx in indices:
-            if idx < len(self.rows):
-                del self.rows[idx]
-            if idx < len(self._photos):
-                del self._photos[idx]
-            self.tree.delete(self.tree.get_children()[idx])
-        if self.status_label:
-            self.status_label.configure(text="已删除选中")
+    def dragLeaveEvent(self, event):
+        self._set_drop_active(False)
+        super().dragLeaveEvent(event)
 
-    def clear_all(self, notify=True):
-        self.rows.clear()
-        self._photos.clear()
-        self.tree.delete(*self.tree.get_children())
-        if notify and self.status_label:
-            self.status_label.configure(text="已清空全部列表")
+    def dropEvent(self, event):
+        self._set_drop_active(False)
+        paths = _ncm_paths(event.mimeData())
+        if paths:
+            event.acceptProposedAction()
+            self.filesDropped.emit(paths)

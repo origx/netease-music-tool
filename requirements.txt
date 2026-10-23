@@ -1,6 +1,5 @@
 pycryptodome
 requests
 jsonpath
-ttkbootstrap
 mutagen
-Pillow
+PySide6

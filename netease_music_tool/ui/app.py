@@ -1,69 +1,111 @@
-import tkinter as tk
+import sys
 
-import ttkbootstrap as ttk
-
-from netease_music_tool.config import (
-    APP_TITLE,
-    FONT_FAMILY,
-    WINDOW_MIN_SIZE,
-    WINDOW_SIZE,
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (
+    QApplication,
+    QButtonGroup,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QMainWindow,
+    QStackedWidget,
+    QVBoxLayout,
+    QWidget,
 )
+
+from netease_music_tool.config import APP_TITLE, TEXT_WHITE, WINDOW_MIN_SIZE, WINDOW_SIZE
+from netease_music_tool.ui import icons
 from netease_music_tool.ui.components.navigation import create_nav_item
 from netease_music_tool.ui.pages.music_dl_basic import build_page as build_basic_page
 from netease_music_tool.ui.pages.music_dl_plus import build_page as build_plus_page
 from netease_music_tool.ui.pages.mvdl import build_page as build_mvdl_page
 from netease_music_tool.ui.pages.ncm_to_mp3 import build_page as build_ncm_page
-from netease_music_tool.ui.theme import configure_application_theme
+from netease_music_tool.ui.theme import apply_theme
+
+# (标题, 图标, 提示)
+NAV_ITEMS = (
+    ("MDL(Basic)", "music", "基础下载(基于旧版官方 API)"),
+    ("MDL(Plus)", "zap", "增强下载(模拟安卓端eapi,支持 Cookie)"),
+    ("NCM2MP3", "repeat", "NCM 格式转换"),
+    ("MVDL", "video", "MV 视频下载"),
+)
+
+
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle(APP_TITLE)
+        self.resize(*WINDOW_SIZE)
+        self.setMinimumSize(*WINDOW_MIN_SIZE)
+
+        central = QWidget()
+        self.setCentralWidget(central)
+        body = QHBoxLayout(central)
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(0)
+
+        body.addWidget(self._build_sidebar())
+
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(20, 18, 20, 16)
+        content_layout.setSpacing(0)
+        self.stack = QStackedWidget()
+        content_layout.addWidget(self.stack)
+        body.addWidget(content, 1)
+
+        self.status_label = QLabel("就绪", objectName="StatusLabel")
+        status_bar = self.statusBar()
+        status_bar.setSizeGripEnabled(False)
+        status_bar.addWidget(self.status_label, 1)
+
+        self._build_pages()
+        self.switch_page(0)
+
+    def _build_sidebar(self):
+        sidebar = QFrame(objectName="Sidebar")
+        sidebar.setFixedWidth(196)
+
+        layout = QVBoxLayout(sidebar)
+        layout.setContentsMargins(12, 16, 12, 12)
+        layout.setSpacing(4)
+
+        layout.addWidget(QLabel("功能", objectName="SectionLabel"))
+        layout.addSpacing(2)
+
+        self.nav_group = QButtonGroup(self)
+        self.nav_group.setExclusive(True)
+        self._nav_buttons = []
+        for index, (title, icon_name, tooltip) in enumerate(NAV_ITEMS):
+            button = create_nav_item(layout, title, index, icon_name, tooltip)
+            button.clicked.connect(lambda _checked=False, i=index: self.switch_page(i))
+            self.nav_group.addButton(button, index)
+            self._nav_buttons.append(button)
+        layout.addStretch(1)
+        return sidebar
+
+    def _build_pages(self):
+        self.pages = [
+            build_basic_page(self.stack, self.status_label),
+            build_plus_page(self.stack, self.status_label),
+            build_ncm_page(self.stack, self.status_label),
+            build_mvdl_page(self.stack, self.status_label),
+        ]
+        for page in self.pages:
+            self.stack.addWidget(page)
+
+    def switch_page(self, index):
+        self.stack.setCurrentIndex(index)
+        self._nav_buttons[index].setChecked(True)
 
 
 def run_app():
-    app = ttk.Window(
-        themename="darkly",
-        title=APP_TITLE,
-        size=WINDOW_SIZE,
-        resizable=(True, True),
-        minsize=WINDOW_MIN_SIZE,
-    )
-    configure_application_theme()
-
-    app.rowconfigure(0, weight=1)
-    app.columnconfigure(0, weight=1)
-    main_container = ttk.Frame(app)
-    main_container.grid(row=0, column=0, sticky="nsew")
-
-    sidebar = ttk.Frame(main_container, width=250)
-    sidebar.pack(side=tk.LEFT, fill=tk.Y)
-    sidebar.pack_propagate(False)
-    ttk.Separator(sidebar, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=15, pady=(20, 10))
-    nav_container = ttk.Frame(sidebar)
-    nav_container.pack(fill=tk.X, pady=(10, 10))
-
-    content_area = ttk.Frame(main_container)
-    content_area.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=24, pady=24)
-    status_label = ttk.Label(app, text="就绪", style="Status.TLabel")
-    status_label.grid(row=1, column=0, sticky="ew")
-
-    pages = (
-        build_basic_page(content_area, app, status_label),
-        build_plus_page(content_area, app, status_label),
-        build_ncm_page(content_area, app, status_label),
-        build_mvdl_page(content_area, app, status_label),
-    )
-
-    nav_labels = []
-
-    def switch_page(index):
-        for page in pages:
-            page.pack_forget()
-        pages[index].pack(fill=tk.BOTH, expand=True)
-        for nav_index, label in enumerate(nav_labels):
-            label.configure(style="NavActive.TLabel" if nav_index == index else "Nav.TLabel")
-
-    for index, title in enumerate(("MDL(Basic)", "MDL(Plus)", "NCM2MP3", "MVDL")):
-        nav_labels.append(create_nav_item(nav_container, title, lambda index=index: switch_page(index), active=index == 0))
-
-    switch_page(0)
-    app.mainloop()
+    app = QApplication.instance() or QApplication(sys.argv)
+    app.setApplicationName(APP_TITLE)
+    apply_theme(app)
+    window = MainWindow()
+    window.show()
+    return app.exec()
 
 
 if __name__ == "__main__":

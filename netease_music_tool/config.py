@@ -2,8 +2,8 @@ import os
 import ssl
 
 APP_TITLE = "NeteaseMusicTool"
-WINDOW_SIZE = (1100, 1000)
-WINDOW_MIN_SIZE = (1000, 900)
+WINDOW_SIZE = (800, 600)
+WINDOW_MIN_SIZE = (700, 500)
 
 # 按本机已安装字体选择中文无衬线字体，运行时由主题模块解析。
 FONT_FAMILIES = (

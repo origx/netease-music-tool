@@ -1,93 +1,118 @@
-"""Cookie 模式切换 + 批量/单行输入切换组件。
+"""ID/链接输入卡片：可选 Cookie 模式开关 + 批量/单行输入 + 「获取信息」。
 
-无 Cookie 时提供多行批量输入框（tk.Text），开启 Cookie 模式后切换为
-单行输入框（ttk.Entry）。MDL(Plus) 与 MVDL 页面共用。
+无 Cookie 时提供多行批量输入框，开启 Cookie 模式后切换为单行输入框。
+MDL(Basic) 不提供 Cookie 开关；MDL(Plus) 与 MVDL 页面共用完整形态。
 """
 
-import tkinter as tk
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QKeySequence, QShortcut
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit
 
-import ttkbootstrap as ttk
+from netease_music_tool.config import TEXT_HINT
+from netease_music_tool.ui import icons
+from netease_music_tool.ui.components.common import Card, ToggleSwitch, make_button
 
-import netease_music_tool.config as config
 
+class ModeInputWidget(Card):
+    modeChanged = Signal(bool)
+    fetchRequested = Signal()
 
-class ModeInputFrame(ttk.Frame):
     def __init__(
         self,
-        parent,
-        on_mode_change=None,
         label_batch="ID/链接列表",
         label_single="ID",
         hint_batch="无 Cookie 时可批量输入，一行一个",
         hint_single="Cookie 模式只能输入一个 ID，先获取信息再下载",
+        allow_cookie=True,
+        parent=None,
     ):
-        super().__init__(parent)
-        self._on_mode_change = on_mode_change
-        self.cookie_enabled = tk.BooleanVar(value=False)
-        self.cookie = tk.StringVar()
+        super().__init__(parent, spacing=8)
+        self._label_batch = label_batch
+        self._hint_batch = hint_batch
+        self._label_single = label_single
+        self._hint_single = hint_single
 
-        mode_row = ttk.Frame(self)
-        mode_row.pack(fill=tk.X, pady=(0, 12))
-        ttk.Checkbutton(
-            mode_row,
-            text="是否使用 Cookie",
-            variable=self.cookie_enabled,
-            bootstyle="round-toggle",
-            command=self._update_mode,
-        ).pack(side=tk.LEFT, padx=12)
+        header = QHBoxLayout()
+        header.setSpacing(8)
+        self.label = QLabel(label_batch, objectName="CardTitle")
+        header.addWidget(self.label)
+        header.addStretch(1)
+        self.cookie_checkbox = ToggleSwitch("Cookie 模式")
+        self.cookie_checkbox.toggled.connect(self._on_toggle)
+        self.cookie_checkbox.setVisible(allow_cookie)
+        header.addWidget(self.cookie_checkbox)
+        self.body.addLayout(header)
 
-        self.cookie_frame = ttk.Frame(self)
-        self.cookie_entry = ttk.Entry(self.cookie_frame, textvariable=self.cookie, show="*")
-        self.cookie_entry.pack(fill=tk.X, expand=True)
+        self.cookie_entry = QLineEdit()
+        self.cookie_entry.setEchoMode(QLineEdit.Password)
+        self.cookie_entry.setPlaceholderText("粘贴网易云音乐登录 Cookie")
+        self.cookie_entry.addAction(icons.icon("key", TEXT_HINT), QLineEdit.LeadingPosition)
+        self.cookie_entry.hide()
+        self.body.addWidget(self.cookie_entry)
 
-        self.label = ttk.Label(self, text=label_batch, font=(config.FONT_FAMILY, 10))
-        self.label.pack(anchor=tk.W)
-        self.hint = ttk.Label(self, text=hint_batch, font=(config.FONT_FAMILY, 9), foreground=config.TEXT_HINT)
-        self.hint.pack(anchor=tk.W, pady=(8, 5))
+        self.batch_input = QPlainTextEdit()
+        self.batch_input.setPlaceholderText("一行一个 ID 或网页链接")
+        self.batch_input.setFixedHeight(84)
+        shortcut = QShortcut(QKeySequence("Ctrl+Return"), self.batch_input)
+        shortcut.setContext(Qt.WidgetShortcut)
+        shortcut.activated.connect(self._request_fetch)
+        self.body.addWidget(self.batch_input)
 
-        self.batch_text = tk.Text(
-            self,
-            height=6,
-            font=(config.FONT_FAMILY, 10),
-            bg=config.BG_INPUT,
-            fg=config.TEXT_NORMAL,
-            insertbackground=config.TEXT_WHITE,
-            relief="flat",
-        )
-        self.single_input = ttk.Entry(self, font=(config.FONT_FAMILY, 10))
-        self.batch_text.pack(fill=tk.X, pady=(0, 12))
+        self.single_input = QLineEdit()
+        self.single_input.setPlaceholderText("输入一个 ID 或网页链接")
+        self.single_input.returnPressed.connect(self._request_fetch)
+        self.body.addWidget(self.single_input)
 
-        self._hints = (label_batch, hint_batch, label_single, hint_single)
-        self._update_mode(notify=False)
+        footer = QHBoxLayout()
+        footer.setSpacing(6)
+        self.hint = QLabel(hint_batch, objectName="Hint")
+        footer.addWidget(self.hint, 1)
+        self.clear_button = make_button("清空", "ghost", "x", "清空输入")
+        self.clear_button.clicked.connect(self._clear_input)
+        footer.addWidget(self.clear_button)
+        self.fetch_button = make_button("获取信息", "primary", "search")
+        self.fetch_button.clicked.connect(self._request_fetch)
+        footer.addWidget(self.fetch_button)
+        self.body.addLayout(footer)
 
-    def _update_mode(self, notify=True):
-        enabled = self.cookie_enabled.get()
-        label_batch, hint_batch, label_single, hint_single = self._hints
+        self._apply_mode(notify=False)
+
+    def _on_toggle(self, enabled):
+        self.cookie_entry.setVisible(enabled)
+        self._clear_input()
+        self._apply_mode(notify=True)
+
+    def _apply_mode(self, notify):
+        enabled = self.cookie_checkbox.isChecked()
+        self.label.setText(self._label_single if enabled else self._label_batch)
+        self.batch_input.setVisible(not enabled)
+        self.single_input.setVisible(enabled)
         if enabled:
-            self.cookie_frame.pack(fill=tk.X, pady=(0, 12), before=self.label)
-            self.cookie_entry.configure(state=tk.NORMAL)
-            self.batch_text.pack_forget()
-            self.single_input.pack(fill=tk.X, pady=(0, 12))
-            self.single_input.delete(0, tk.END)
-            self.label.configure(text=label_single)
-            self.hint.configure(text=hint_single)
+            self.hint.setText(f"{self._hint_single} · 回车获取")
         else:
-            self.cookie_frame.pack_forget()
-            self.single_input.pack_forget()
-            self.batch_text.pack(fill=tk.X, pady=(0, 12))
-            self.batch_text.delete("1.0", tk.END)
-            self.label.configure(text=label_batch)
-            self.hint.configure(text=hint_batch)
-        if notify and self._on_mode_change:
-            self._on_mode_change(enabled)
+            self.hint.setText(f"{self._hint_batch} · Ctrl+Enter 获取")
+        if notify:
+            self.modeChanged.emit(enabled)
+
+    def _clear_input(self):
+        self.batch_input.clear()
+        self.single_input.clear()
+
+    def _request_fetch(self):
+        if self.fetch_button.isEnabled():
+            self.fetchRequested.emit()
+
+    def set_busy(self, busy):
+        for widget in (self.fetch_button, self.cookie_checkbox, self.clear_button):
+            widget.setEnabled(not busy)
 
     def is_cookie_mode(self):
-        return self.cookie_enabled.get()
+        return self.cookie_checkbox.isChecked()
 
     def get_input_text(self):
-        if self.cookie_enabled.get():
-            return self.single_input.get()
-        return self.batch_text.get("1.0", tk.END)
+        if self.is_cookie_mode():
+            return self.single_input.text()
+        return self.batch_input.toPlainText()
 
     def get_cookie(self):
-        return self.cookie.get() if self.cookie_enabled.get() else ""
+        return self.cookie_entry.text().strip() if self.is_cookie_mode() else ""

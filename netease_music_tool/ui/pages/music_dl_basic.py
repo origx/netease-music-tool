@@ -1,87 +1,100 @@
-import threading
-import tkinter as tk
-from tkinter import filedialog
-
-import ttkbootstrap as ttk
+"""MDL(Basic) 页面：通过旧版官方 API 下载非 VIP 播放歌曲。"""
 
 import netease_music_tool.config as config
-from netease_music_tool.services.music_service import download_audio_by_info, fetch_song_info, parse_song_ids
-from netease_music_tool.ui.components.song_list import SongListFrame
+from netease_music_tool.services.music_service import (
+    download_audio_by_info,
+    fetch_song_info,
+    parse_song_ids,
+)
+from netease_music_tool.ui.components.common import PageHeader, PathPicker
+from netease_music_tool.ui.components.mode_input import ModeInputWidget
+from netease_music_tool.ui.components.song_list import SongListWidget
+from netease_music_tool.ui.pages.base import StatusPage
 
 
-def build_page(parent, app, status_label):
-    page = ttk.Frame(parent)
-    save_path = tk.StringVar(value=config.DESKTOP_PATH)
+class MusicDlBasicPage(StatusPage):
+    def __init__(self, status_label, parent=None):
+        super().__init__(status_label, parent)
+        layout = self.page_layout
 
-    ttk.Label(page, text="MusicDawnloader(Basic)", font=(config.FONT_FAMILY, 16, "bold")).pack(anchor=tk.W, pady=(0, 12))
-    ttk.Label(page, text="利用旧版官方API下载, 只能下载非VIP播放歌曲(30s都不行)", font=(config.FONT_FAMILY, 9), foreground=config.TEXT_HINT).pack(anchor=tk.W, pady=(0, 20))
+        layout.addWidget(
+            PageHeader(
+                "MusicDownloader(Basic)",
+                "利用旧版官方 API 下载，只能下载非 VIP 播放歌曲（30s 试听也不行）",
+            )
+        )
 
-    path = ttk.Frame(page)
-    path.pack(fill=tk.X, pady=(0, 15))
-    ttk.Label(path, text="保存目录: ", font=(config.FONT_FAMILY, 10)).pack(side=tk.LEFT)
-    ttk.Entry(path, textvariable=save_path, font=(config.FONT_FAMILY, 10)).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10))
-    ttk.Button(path, text="选择目录", bootstyle="secondary", command=lambda: choose()).pack(side=tk.LEFT)
+        self.mode_input = ModeInputWidget(
+            label_batch="ID/链接列表",
+            hint_batch="一行一个歌曲 ID 或网页链接",
+            allow_cookie=False,
+        )
+        self.mode_input.fetchRequested.connect(self.fetch_info)
+        layout.addWidget(self.mode_input)
 
-    ttk.Label(page, text="ID/链接列表", font=(config.FONT_FAMILY, 10)).pack(anchor=tk.W)
-    text = tk.Text(
-        page,
-        height=6,
-        font=(config.FONT_FAMILY, 10),
-        bg=config.BG_INPUT,
-        fg=config.TEXT_NORMAL,
-        insertbackground=config.TEXT_WHITE,
-        relief="flat",
-    )
-    text.pack(fill=tk.X, pady=(8, 12))
+        self.song_list = SongListWidget(status_label=status_label)
+        self.song_list.downloadRequested.connect(self.download_selected)
+        self.path_picker = PathPicker("选择下载保存文件夹", config.DESKTOP_PATH)
+        self.song_list.add_footer_widget(self.path_picker, 1)
+        self.list_widget = self.song_list
+        self.busy_widgets = (self.mode_input, self.song_list)
+        layout.addWidget(self.song_list, 1)
 
-    song_list = SongListFrame(
-        page,
-        status_label=status_label,
-        on_fetch=lambda: fetch_info(),
-        on_download=lambda: download_selected(),
-    )
-    song_list.pack(fill=tk.BOTH, expand=True)
-
-    def choose():
-        folder = filedialog.askdirectory(title="选择下载保存文件夹")
-        if folder:
-            save_path.set(folder)
-
-    def format_row(info):
+    @staticmethod
+    def _format_row(info):
         return (
             info.get("id", "-"),
             info.get("size_text", "-"),
             "可下载" if info.get("ok") else "获取失败",
         )
 
-    def fetch_info():
-        ids = parse_song_ids(text.get("1.0", tk.END))
+    def fetch_info(self):
+        ids = parse_song_ids(self.mode_input.get_input_text())
         if not ids:
-            status_label.configure(text="请输入歌曲 ID 或链接")
+            self.set_status("请输入歌曲 ID 或链接")
             return
-        song_list.fetch_button.configure(state=tk.DISABLED)
-        status_label.configure(text="正在获取歌曲信息...")
+        self.set_busy(True)
+        self.set_status("正在获取歌曲信息...")
+        self.runner.submit(
+            fetch_song_info,
+            ids,
+            on_done=self._on_fetched,
+            on_error=self._on_fetch_error,
+        )
 
-        def request():
-            result = fetch_song_info(ids)
-            app.after(0, lambda: show(result))
+    def _on_fetched(self, result):
+        self.song_list.populate(result, self._format_row)
+        self.set_busy(False)
+        self.set_status("歌曲信息获取完成，已自动勾选可下载项")
 
-        threading.Thread(target=request, daemon=True).start()
+    def _on_fetch_error(self, message):
+        self.set_busy(False)
+        self.set_status(f"获取歌曲信息失败: {message}")
 
-    def show(result):
-        song_list.populate(result, format_row)
-        song_list.fetch_button.configure(state=tk.NORMAL)
-        status_label.configure(text="歌曲信息获取完成")
-
-    def download_selected():
-        indices = song_list.selected_indices()
+    def download_selected(self):
+        indices = self.song_list.selected_indices()
         if not indices:
-            status_label.configure(text="请先选择要下载的歌曲")
+            self.set_status("请先选择要下载的歌曲")
             return
-        targets = [(song_list.tree.get_children()[idx], song_list.rows[idx]) for idx in indices]
-        for iid, info in targets:
-            ok = download_audio_by_info(info, save_path.get(), lambda text: status_label.configure(text=text))
-            song_list.set_status(iid, "下载完成" if ok else "下载失败")
-        status_label.configure(text="下载任务结束")
+        targets = [(row, self.song_list.rows[row]) for row in indices]
+        save_dir = self.path_picker.path()
+        self.set_busy(True)
+        self.start_download(
+            targets,
+            lambda info: download_audio_by_info(info, save_dir),
+            lambda info: f"正在下载 ID:{info.get('id')}",
+            on_done=self._on_download_done,
+            on_error=self._on_download_error,
+        )
 
-    return page
+    def _on_download_done(self, success):
+        self.set_busy(False)
+        self.set_status(f"下载任务结束，成功 {success} 首")
+
+    def _on_download_error(self, message):
+        self.set_busy(False)
+        self.set_status(f"下载失败: {message}")
+
+
+def build_page(parent, status_label):
+    return MusicDlBasicPage(status_label, parent)
